@@ -11,7 +11,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["https://sardor018.github.io"], 
     allow_credentials=True,
     allow_methods=["*"],  # <-- Именно эта строчка разрешает OPTIONS-запросы!
     allow_headers=["*"],
