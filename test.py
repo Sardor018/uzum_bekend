@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 import json
 import pandas as pd
 import re
+import time
 
 app = FastAPI()
 
@@ -28,34 +29,53 @@ SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1MNUzN4jpE-E8vEVtU4ng_Wm
 class ProductRequest(BaseModel):
     url: str
 
+import time # Добавьте в импорты в самом верху
+
+# Переменные для хранения кеша
+CACHED_DF = None
+LAST_UPDATE_TIME = 0
+CACHE_EXPIRE_SECONDS = 24 * 60 * 60  # 24 часа в секундах
+
 def get_commission_from_sheet(category_name: str):
+    global CACHED_DF, LAST_UPDATE_TIME
+    
+    current_time = time.time()
+    
     try:
-        df = pd.read_csv(SHEET_CSV_URL)
+        # Проверяем: если кеш пустой или он устарел (прошло > 24ч)
+        if CACHED_DF is None or (current_time - LAST_UPDATE_TIME) > CACHE_EXPIRE_SECONDS:
+            print("⏳ Загружаю свежие данные из Google Таблицы...")
+            CACHED_DF = pd.read_csv(SHEET_CSV_URL)
+            LAST_UPDATE_TIME = current_time
+        else:
+            print("🚀 Использую данные из кеша")
+
+        df = CACHED_DF
         
-        # Проходимся по всем 17 колонкам таблицы
+        # Поиск по всем колонкам (ваш текущий алгоритм)
         for col in df.columns:
-            # Ищем точное совпадение категории (игнорируем регистр букв и лишние пробелы)
             match = df[df[col].astype(str).str.strip().str.lower() == category_name.strip().lower()]
             
             if not match.empty:
-                # Мы нашли строку с этой категорией! Берем ее данные
                 row_data = match.iloc[0]
-                # Собираем все непустые ячейки из этой строки в один список
                 row_values = [str(v).strip() for v in row_data.values if pd.notna(v) and str(v).strip() != '']
-                # Проверяем, что в строке достаточно данных
+                
                 if len(row_values) >= 3:
-                    # Берем три последних элемента списка
                     return {
                         "FBO": row_values[-3],
                         "FBS": row_values[-2],
                         "DBS": row_values[-1]
                     }
                 else:
-                    return {"error": "В таблице не хватает колонок с комиссиями для этой категории"}
+                    return {"error": "В таблице недостаточно данных для этой категории"}
                 
         return "Категория не найдена в таблице комиссий."
         
     except Exception as e:
+        # Если ошибка при загрузке, но старый кеш есть — используем его
+        if CACHED_DF is not None:
+            print(f"⚠️ Ошибка обновления, использую старый кеш: {e}")
+            return get_commission_from_sheet(category_name) 
         return f"Ошибка при чтении таблицы: {str(e)}"
 
 
