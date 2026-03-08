@@ -18,7 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.get("/api/ping")
 async def ping_server():
     """Простой эндпоинт для пробуждения сервера"""
