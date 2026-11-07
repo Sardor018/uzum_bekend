@@ -206,6 +206,45 @@ def extract_breadcrumbs_jsonld(soup):
     return []
 
 
+@app.get("/api/search-categories")
+async def search_categories(q: str, limit: int = 15):
+    """Ручной поиск категории по таблице комиссий (не зависит от доступа к Uzum)."""
+    q_norm = norm(q)
+    tokens = q_norm.split()
+    if len(q_norm) < 2:
+        return {"results": []}
+
+    try:
+        records = await asyncio.to_thread(load_records)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Не удалось прочитать таблицу комиссий: {e}")
+
+    scored = []
+    for r in records:
+        hay = " ".join(r["path_norm"])
+        if all(t in hay for t in tokens):
+            leaf = r["path_norm"][-1]
+            rank = 0 if leaf.startswith(tokens[0]) else (1 if tokens[0] in leaf else 2)
+            scored.append((rank, len(leaf), r))
+    scored.sort(key=lambda x: (x[0], x[1]))
+
+    show = lambda v: v if v else NO_SCHEME
+    limit = max(1, min(limit, 30))
+    return {
+        "total": len(scored),
+        "results": [
+            {
+                "id": r["id"],
+                "path": " > ".join(r["path"]),
+                "FBO": show(r["FBO"]),
+                "FBS": show(r["FBS"]),
+                "DBS": show(r["DBS"]),
+            }
+            for _, _, r in scored[:limit]
+        ],
+    }
+
+
 def extract_breadcrumbs_links(soup):
     """
     Хлебные крошки Uzum — обычные ссылки: Главная > Все категории > Электроника > ... > Чехлы.
@@ -285,9 +324,9 @@ async def get_uzum_category(request: ProductRequest):
         print(f"❌ Нет категорий. url={response.url} len={len(response.text)} headers={hdrs} body={snippet}")
         raise HTTPException(
             status_code=404,
-            detail=(f"Не удалось найти категории. HTTP {response.status_code}, "
-                    f"длина HTML: {len(response.text)}, title: {title}, заголовки: {hdrs}, "
-                    f"начало ответа: {snippet}"),
+            detail=("Не удалось определить категорию по ссылке: Uzum не отдаёт страницу товара "
+                    "серверу (вероятно, блокирует запросы из дата-центра). "
+                    "Выберите категорию вручную ниже."),
         )
 
     final_category = category_path[-1]
