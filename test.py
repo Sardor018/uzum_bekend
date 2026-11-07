@@ -206,6 +206,32 @@ def extract_breadcrumbs_jsonld(soup):
     return []
 
 
+def extract_breadcrumbs_links(soup):
+    """
+    Хлебные крошки Uzum — обычные ссылки: Главная > Все категории > Электроника > ... > Чехлы.
+    Берём ссылки /category/ сразу после «Все категории» и останавливаемся на первой чужой ссылке
+    (дальше идут ссылки на отзывы, магазин и т. п.), поэтому верхнее меню каталога не попадает.
+    """
+    start = None
+    for a in soup.find_all("a", href=True):
+        if "/category/" in a["href"] and norm(a.get_text()) == "все категории":
+            start = a
+            break
+    if start is None:
+        return []
+
+    names = []
+    for a in start.find_all_next("a", href=True):
+        if "/category/" not in a["href"]:
+            break
+        text = a.get_text(strip=True)
+        if text and text not in names:
+            names.append(text)
+        if len(names) >= 8:
+            break
+    return names
+
+
 @app.post("/api/get-category")
 async def get_uzum_category(request: ProductRequest):
     target_url = request.url
@@ -220,6 +246,11 @@ async def get_uzum_category(request: ProductRequest):
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         "Upgrade-Insecure-Requests": "1",
+        "Referer": "https://uzum.uz/ru",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
     }
 
     async with httpx.AsyncClient() as client:
@@ -234,6 +265,9 @@ async def get_uzum_category(request: ProductRequest):
     category_path = extract_breadcrumbs_jsonld(soup)
 
     if not category_path:
+        category_path = extract_breadcrumbs_links(soup)
+
+    if not category_path:
         raw_path = [el.get_text(strip=True) for el in soup.select("nav a") if el.get_text(strip=True)]
         for item in raw_path:
             if "Соглашение" in item or "Положение" in item:
@@ -245,11 +279,15 @@ async def get_uzum_category(request: ProductRequest):
 
     if not category_path:
         title = soup.title.get_text(strip=True) if soup.title else None
+        hdrs = {k: response.headers.get(k) for k in ("server", "content-type", "cf-ray", "x-powered-by")
+                if response.headers.get(k)}
+        snippet = re.sub(r"\s+", " ", response.text[:500])
+        print(f"❌ Нет категорий. url={response.url} len={len(response.text)} headers={hdrs} body={snippet}")
         raise HTTPException(
             status_code=404,
             detail=(f"Не удалось найти категории. HTTP {response.status_code}, "
-                    f"длина HTML: {len(response.text)}, title: {title}, "
-                    f"итоговый URL: {response.url}"),
+                    f"длина HTML: {len(response.text)}, title: {title}, заголовки: {hdrs}, "
+                    f"начало ответа: {snippet}"),
         )
 
     final_category = category_path[-1]
